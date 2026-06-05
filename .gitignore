@@ -1,4 +1,6 @@
 # created by virtualenv automatically
 .venv
 *.xlsx
-.xml
+*.xml
+*.pdf
+*.iml
