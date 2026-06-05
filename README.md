@@ -1,4 +1,4 @@
-# 📒 Livre de Comptes - Les Vétérans du Basket
+# 📒 Livre de Comptes
 
 Script automatisé pour générer un livre de comptes Excel à partir de relevés bancaires PDF.
 
