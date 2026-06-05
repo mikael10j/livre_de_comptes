@@ -97,3 +97,5 @@ livre de comptes/
 ├── *.pdf                    # Relevés bancaires
 └── README.md               # Cette documentation
 ```
+
+*Développé à l'aide de Claude Sonnet 4.6*
