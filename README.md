@@ -58,12 +58,42 @@ Le script utilise une **approche intelligente** :
 3. **Fallback adaptatif** pour les formats atypiques
 4. **Validation des montants** et classification selon le libellé
 
+## 🧪 Tests
+
+Le projet inclut une suite de tests complète organisée dans le répertoire `tests/` :
+
+```bash
+# Exécuter tous les tests
+python run_tests.py
+
+# Tests spécifiques
+python tests/test_unitaires.py      # Tests unitaires
+python tests/test_performance.py    # Tests de performance  
+python tests/test_integration.py    # Tests avec vrais PDFs
+
+# Avec pytest (si installé)
+pytest -v
+```
+
+### Types de tests inclus
+
+- **Tests unitaires** (18 tests) : Fonctions individuelles, parsing, catégorisation
+- **Tests de performance** (6 tests) : Vitesse d'exécution, robustesse, limites mémoire  
+- **Tests d'intégration** (6 tests) : Extraction avec vrais PDFs, cohérence des données
+
 ## 📁 Structure du projet
 
 ```
 livre de comptes/
 ├── livre_comptes.py          # Script principal
 ├── livre_comptes.xlsx        # Fichier de sortie
-├── *.pdf                     # Relevés bancaires
-└── README.md                # Cette documentation
+├── run_tests.py             # Lanceur de tous les tests
+├── pytest.ini              # Configuration pytest
+├── tests/                   # Répertoire des tests
+│   ├── __init__.py         # Package tests
+│   ├── test_unitaires.py   # Tests unitaires (18 tests)
+│   ├── test_performance.py # Tests de performance (6 tests)
+│   └── test_integration.py # Tests d'intégration (6 tests)
+├── *.pdf                    # Relevés bancaires
+└── README.md               # Cette documentation
 ```
