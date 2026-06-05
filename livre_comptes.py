@@ -145,8 +145,47 @@ def parse_montant(montant_str: str) -> float:
 # - analyser_ligne_operation() : remplacée par le traitement pandas des DataFrames
 
 
+def find_header_row(df):
+    """Trouve la ligne d'en-têtes contenant 'Libellé', 'Débit', 'Crédit'."""
+    for idx, row in df.iterrows():
+        row_text = " ".join(str(cell) for cell in row.values).upper()
+        if "LIBELLÉ" in row_text and ("DÉBIT" in row_text or "CRÉDIT" in row_text):
+            return idx
+    return None
+
+def create_named_dataframe(df, header_row_idx):
+    """Crée un DataFrame avec des noms de colonnes basés sur la ligne d'en-têtes."""
+    if header_row_idx is None:
+        return None
+        
+    # Extraire les noms de colonnes de la ligne d'en-têtes
+    headers = df.iloc[header_row_idx].values
+    
+    # Nettoyer et normaliser les noms de colonnes
+    column_names = []
+    for i, header in enumerate(headers):
+        header_clean = str(header).strip().upper()
+        if "LIBELLÉ" in header_clean or "LIBELLE" in header_clean:
+            column_names.append("LIBELLE")
+        elif "DÉBIT" in header_clean or "DEBIT" in header_clean:
+            column_names.append("DEBIT")
+        elif "CRÉDIT" in header_clean or "CREDIT" in header_clean:
+            column_names.append("CREDIT")
+        elif "DATE" in header_clean and "OPÉ" in header_clean:
+            column_names.append("DATE_OPE")
+        elif "DATE" in header_clean and ("VAL" in header_clean or "VALEUR" in header_clean):
+            column_names.append("DATE_VAL")
+        else:
+            column_names.append(f"COL_{i}")
+    
+    # Créer un nouveau DataFrame avec les données après les en-têtes
+    data_rows = df.iloc[header_row_idx + 1:].copy()
+    data_rows.columns = column_names
+    
+    return data_rows
+
 def extraire_operations_pdf_camelot(pdf_path: Path, annee: int) -> tuple[list, list]:
-    """Extrait les opérations depuis un PDF en utilisant camelot et pandas."""
+    """Extrait les opérations depuis un PDF en utilisant camelot et pandas avec détection automatique des colonnes."""
     recettes, depenses = [], []
 
     # Essayer différents paramètres camelot pour maximiser la compatibilité
@@ -156,7 +195,7 @@ def extraire_operations_pdf_camelot(pdf_path: Path, annee: int) -> tuple[list, l
         {"flavor": "stream", "pages": "all", "row_tol": 10},    # Paramètres alternatifs
     ]
     
-    tables = None
+    table_operations = None
     param_utilisé = None
     
     for i, params in enumerate(paramètres_camelot):
@@ -164,132 +203,121 @@ def extraire_operations_pdf_camelot(pdf_path: Path, annee: int) -> tuple[list, l
             print(f"    🔧 Test paramètre {i+1}: {params}")
             tables_test = camelot.read_pdf(str(pdf_path), strip_text="\n", **params)
             
-            # Vérifier si on trouve des tables avec des opérations
-            tables_avec_operations = []
+            # Chercher une table avec des en-têtes de colonnes
             for table in tables_test:
                 df = table.df
-                # Une table d'opérations doit avoir au moins 5 colonnes et des dates
-                if df.shape[1] >= 5:
-                    for idx, row in df.iterrows():
-                        if idx < 4:
-                            continue
-                        date_col = str(row.iloc[0]).strip()
-                        if re.match(r'\d{2}\.\d{2}', date_col):
-                            tables_avec_operations.append(table)
-                            break
+                header_row_idx = find_header_row(df)
+                
+                if header_row_idx is not None:
+                    table_operations = create_named_dataframe(df, header_row_idx)
+                    param_utilisé = params
+                    print(f"    ✅ Succès avec paramètre {i+1}: En-têtes trouvés à la ligne {header_row_idx}")
+                    break
             
-            if tables_avec_operations:
-                tables = tables_avec_operations
-                param_utilisé = params
-                print(f"    ✅ Succès avec paramètre {i+1}: {len(tables)} table(s) avec opérations")
+            if table_operations is not None:
                 break
-            elif tables_test:
-                print(f"    ⚠️  Paramètre {i+1}: {len(tables_test)} table(s) trouvée(s) mais sans opérations détectées")
-            else:
-                print(f"    ❌ Paramètre {i+1}: aucune table trouvée")
+                
+            print(f"    ❌ Paramètre {i+1}: aucune table avec en-têtes trouvée")
                 
         except Exception as e:
             print(f"    ❌ Erreur avec paramètre {i+1}: {e}")
             continue
     
-    if not tables:
-        print(f"❌ Aucune table d'opérations trouvée dans {pdf_path.name}")
+    if table_operations is None:
+        print(f"❌ Aucune table d'opérations avec en-têtes trouvée dans {pdf_path.name}")
         return [], []
         
-    print(f"    📊 {len(tables)} table(s) d'opérations détectée(s)")
+    print(f"    📊 Table d'opérations trouvée avec colonnes: {list(table_operations.columns)}")
 
     operations_trouvees = 0
     
-    # Traiter chaque table
-    for i, table in enumerate(tables):
-        df = table.df
-        print(f"    📋 Table {i+1}: {len(df)} lignes")
+    # Parcourir chaque ligne du DataFrame avec colonnes nommées
+    for idx, row in table_operations.iterrows():
+        # Identifier les colonnes de dates (première et deuxième colonnes généralement)
+        date_ope = str(row.iloc[0]).strip() if len(row) > 0 else ""
+        date_val = str(row.iloc[1]).strip() if len(row) > 1 else ""
         
-        # Parcourir chaque ligne du DataFrame
-        for idx, row in df.iterrows():
-            # Ignorer les en-têtes et lignes vides
-            if idx < 2:  # Les 2 premières lignes sont généralement les en-têtes
-                continue
-                
-            # Vérifier si c'est une ligne d'opération (avec dates)
-            date_ope = str(row.iloc[0]).strip() if len(row) > 0 else ""
-            date_val = str(row.iloc[1]).strip() if len(row) > 1 else ""
+        # Ignorer les lignes sans dates valides
+        if not re.match(r'\d{2}\.\d{2}', date_ope):
+            continue
+            
+        # Extraire le libellé
+        libelle = ""
+        if "LIBELLE" in table_operations.columns:
+            libelle = str(row["LIBELLE"]).strip()
+        else:
+            # Fallback: utiliser la colonne 2
             libelle = str(row.iloc[2]).strip() if len(row) > 2 else ""
-            
-            # Ignorer les lignes sans dates valides
-            if not re.match(r'\d{2}\.\d{2}', date_ope):
-                continue
-                
-            # Stratégie d'extraction des montants adaptée aux différents formats
-            montant = 0.0
+        
+        # Extraire débit et crédit en utilisant les noms de colonnes
+        montant = 0.0
+        est_recette = False
+        
+        # Méthode robuste: chercher dans les colonnes DEBIT et CREDIT nommées
+        debit_value = ""
+        credit_value = ""
+        
+        if "DEBIT" in table_operations.columns:
+            debit_value = str(row["DEBIT"]).strip()
+        if "CREDIT" in table_operations.columns:
+            credit_value = str(row["CREDIT"]).strip()
+        
+        # Nettoyer les montants
+        debit_clean = re.sub(r'[¨\s]', '', debit_value) if debit_value else ""
+        credit_clean = re.sub(r'[¨\s]', '', credit_value) if credit_value else ""
+        
+        # Déterminer le montant et le type
+        if debit_clean and debit_clean not in ["", "nan", "0"]:
+            montant = parse_montant(debit_clean)
             est_recette = False
-            
-            # Méthode 1: Vérifier les colonnes débit/crédit traditionnelles (avant-dernière/dernière)
-            debit_str = str(row.iloc[-2]).strip() if len(row) >= 2 else ""
-            credit_str = str(row.iloc[-1]).strip() if len(row) >= 1 else ""
-            
-            # Nettoyer les montants (enlever les caractères parasites)
-            debit_str = re.sub(r'[¨\s]', '', debit_str)
-            credit_str = re.sub(r'[¨\s]', '', credit_str)
-            
-            if debit_str and debit_str != "nan" and debit_str != "":
-                # C'est un débit (dépense)
-                montant = parse_montant(debit_str)
-                est_recette = False
-            elif credit_str and credit_str != "nan" and credit_str != "":
-                # C'est un crédit (recette)  
-                montant = parse_montant(credit_str)
-                est_recette = True
-            else:
-                # Méthode 2: Chercher un montant dans toutes les colonnes (pour format 2023)
-                for col_idx in range(3, len(row)):  # Commencer après le libellé
-                    val_str = str(row.iloc[col_idx]).strip()
+        elif credit_clean and credit_clean not in ["", "nan", "0"]:
+            montant = parse_montant(credit_clean)
+            est_recette = True
+        else:
+            # Fallback: chercher un montant dans toutes les colonnes pour les formats atypiques
+            for col_name in table_operations.columns:
+                if col_name not in ["LIBELLE", "DATE_OPE", "DATE_VAL"]:
+                    val_str = str(row[col_name]).strip()
                     val_clean = re.sub(r'[¨\s]', '', val_str)
                     
-                    if val_clean and val_clean != "nan" and val_clean != "":
-                        # Vérifier si c'est un montant valide (contient chiffres et virgule)
+                    if val_clean and val_clean not in ["", "nan"]:
+                        # Vérifier si c'est un montant valide
                         if re.match(r'^\d{1,4}(?:\s?\d{3})*,\d{2}$', val_clean):
                             montant = parse_montant(val_clean)
                             if montant > 0:
-                                # Déterminer si c'est débit ou crédit selon le libellé
+                                # Déterminer le type selon le libellé
                                 libelle_upper = libelle.upper()
-                                if any(mot in libelle_upper for mot in ["REM CHQ", "REMISE", "VERSEMENT", "DEPOT", "VIREMENT"]):
-                                    est_recette = True
-                                else:
-                                    est_recette = False
+                                mots_recette = ["REM CHQ", "REMISE", "VERSEMENT", "DEPOT", "VIREMENT", "REGUL", "VIR RECU"]
+                                est_recette = any(mot in libelle_upper for mot in mots_recette)
                                 break
-                
-                # Si aucun montant trouvé, ignorer cette ligne
-                if montant <= 0:
-                    continue
-                
-            # Ignorer les montants nuls ou invalides
-            if montant <= 0:
-                continue
-                
-            operations_trouvees += 1
+        
+        # Ignorer les montants nuls ou invalides
+        if montant <= 0:
+            continue
             
-            # Convertir format de date DD.MM en DD/MM
-            date_ope_formatted = date_ope.replace('.', '/')
-            date_val_formatted = date_val.replace('.', '/')
-            
-            # Créer l'opération
-            op = [
-                f"{date_ope_formatted}/{annee}",
-                f"{date_val_formatted}/{annee}",
-                libelle.strip(),
-                "",   # référence
-                montant,
-                "",   # catégorie (sera remplie ci-dessous)
-                pdf_path.stem,
-            ]
+        operations_trouvees += 1
+        
+        # Convertir format de date DD.MM en DD/MM
+        date_ope_formatted = date_ope.replace('.', '/')
+        date_val_formatted = date_val.replace('.', '/')
+        
+        # Créer l'opération
+        op = [
+            f"{date_ope_formatted}/{annee}",
+            f"{date_val_formatted}/{annee}",
+            libelle.strip(),
+            "",   # référence
+            montant,
+            "",   # catégorie (sera remplie ci-dessous)
+            pdf_path.stem,
+        ]
 
-            if est_recette:
-                op[5] = categoriser(libelle, REGLES_RECETTES)
-                recettes.append(op)
-            else:
-                op[5] = categoriser(libelle, REGLES_DEPENSES)
-                depenses.append(op)
+        if est_recette:
+            op[5] = categoriser(libelle, REGLES_RECETTES)
+            recettes.append(op)
+        else:
+            op[5] = categoriser(libelle, REGLES_DEPENSES)
+            depenses.append(op)
 
     print(f"    📋 {operations_trouvees} opérations extraites")
     return recettes, depenses
