@@ -116,4 +116,4 @@ livre de comptes/
 └── README.md               # Cette documentation
 ```
 
-*Développé à l'aide de Claude Sonnet 4.6*
+*Développé à l'aide de Claude Sonnet 4.6 et Qwen3 Coder Plus*
