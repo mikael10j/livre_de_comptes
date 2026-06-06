@@ -19,7 +19,7 @@ source .venv/bin/activate  # Linux/Mac
 # ou .venv\Scripts\activate  # Windows
 
 # Installer les dépendances
-pip install camelot-py[cv] pandas openpyxl
+pip install -r requirements.txt
 ```
 
 ## 🚀 Utilisation
@@ -58,6 +58,18 @@ Le script utilise une **approche intelligente** :
 3. **Fallback adaptatif** pour les formats atypiques
 4. **Validation des montants** et classification selon le libellé
 
+## 🏗️ Architecture du projet
+
+Le code a été réorganisé en modules pour améliorer la maintenabilité :
+
+- `main.py` - Point d'entrée principal de l'application
+- `config.py` - Configuration des couleurs, catégories et règles
+- `models.py` - Modèles de données (Transaction, etc.)
+- `parser.py` - Extraction et traitement des données PDF
+- `excel_writer.py` - Génération des fichiers Excel
+- `livre_comptes.py` - Ancien fichier principal, maintenant point d'entrée pour compatibilité
+- `requirements.txt` - Dépendances du projet
+
 ## 🧪 Tests
 
 Le projet inclut une suite de tests complète organisée dans le répertoire `tests/` :
@@ -85,7 +97,13 @@ pytest -v
 
 ```
 livre de comptes/
-├── livre_comptes.py          # Script principal
+├── livre_comptes.py          # Script principal (point d'entrée)
+├── main.py                  # Programme principal
+├── config.py                # Configuration
+├── models.py                # Modèles de données
+├── parser.py                # Extraction des données PDF
+├── excel_writer.py          # Génération Excel
+├── requirements.txt         # Dépendances
 ├── livre_comptes.xlsx        # Fichier de sortie
 ├── run_tests.py             # Lanceur de tous les tests
 ├── pytest.ini              # Configuration pytest

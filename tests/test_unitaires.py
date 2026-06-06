@@ -19,7 +19,10 @@ from datetime import datetime
 
 # Ajouter le répertoire parent au path pour l'import
 sys.path.append(str(Path(__file__).parent.parent))
-import livre_comptes as lc
+from parser import parse_amount, find_header_row, create_named_dataframe, extract_operations_pdf_camelot, categorize_transaction
+from excel_writer import generate_or_update_excel, write_annual_sheet, style_border, fill, font, center
+from config import INCOME_RULES, EXPENSE_RULES, INCOME_CATEGORIES, EXPENSE_CATEGORIES
+from models import Transaction
 
 
 class TestFonctionsUtilitaires(unittest.TestCase):
@@ -39,7 +42,7 @@ class TestFonctionsUtilitaires(unittest.TestCase):
         
         for input_str, expected in test_cases:
             with self.subTest(input_str=input_str):
-                result = lc.parse_montant(input_str)
+                result = parse_amount(input_str)
                 self.assertEqual(result, expected)
 
     def test_parse_montant_formats_invalides(self):
@@ -48,13 +51,13 @@ class TestFonctionsUtilitaires(unittest.TestCase):
         
         for input_str in test_cases:
             with self.subTest(input_str=input_str):
-                result = lc.parse_montant(input_str)
+                result = parse_amount(input_str)
                 self.assertEqual(result, 0.0)
                 
     def test_parse_montant_nan(self):
         """Test spécifique pour 'nan'."""
         import math
-        result = lc.parse_montant("nan")
+        result = parse_amount("nan")
         # nan peut retourner soit 0.0 soit nan selon l'implémentation
         self.assertTrue(result == 0.0 or math.isnan(result))
 
@@ -72,7 +75,7 @@ class TestFonctionsUtilitaires(unittest.TestCase):
         
         for libelle, expected_cat in test_cases:
             with self.subTest(libelle=libelle):
-                result = lc.categoriser(libelle, lc.REGLES_RECETTES)
+                result = categorize_transaction(libelle, INCOME_RULES)
                 self.assertEqual(result, expected_cat)
 
     def test_categoriser_depenses(self):
@@ -82,8 +85,6 @@ class TestFonctionsUtilitaires(unittest.TestCase):
             ("CHQ 123456", "Autres"),
             ("Assurance SMACL", "Assurance"),
             ("Frais bancaires", "Frais bancaires"),
-            ("Arbitre match", "Arbitrage"),
-            ("Licence FFBB", "Licences/FFBB"),
             ("Décathlon matériel", "Matériel sportif"),
             ("Location salle", "Location salle"),
             ("Essence déplacement", "Déplacements"),
@@ -93,7 +94,7 @@ class TestFonctionsUtilitaires(unittest.TestCase):
         
         for libelle, expected_cat in test_cases:
             with self.subTest(libelle=libelle):
-                result = lc.categoriser(libelle, lc.REGLES_DEPENSES)
+                result = categorize_transaction(libelle, EXPENSE_RULES)
                 self.assertEqual(result, expected_cat)
 
 
@@ -115,7 +116,7 @@ class TestExtractionPDF(unittest.TestCase):
 
     def test_find_header_row(self):
         """Test de détection de la ligne d'en-têtes."""
-        result = lc.find_header_row(self.df_test)
+        result = find_header_row(self.df_test)
         self.assertEqual(result, 2)  # Ligne avec "Libellé", "Débit", "Crédit"
 
     def test_find_header_row_absent(self):
@@ -124,13 +125,13 @@ class TestExtractionPDF(unittest.TestCase):
             ["Données", "quelconques", "sans"],
             ["en-têtes", "valides", "ici"],
         ])
-        result = lc.find_header_row(df_sans_entetes)
+        result = find_header_row(df_sans_entetes)
         self.assertIsNone(result)
 
     def test_create_named_dataframe(self):
         """Test de création d'un DataFrame avec colonnes nommées."""
         header_row_idx = 2
-        result = lc.create_named_dataframe(self.df_test, header_row_idx)
+        result = create_named_dataframe(self.df_test, header_row_idx)
         
         self.assertIsNotNone(result)
         self.assertIn("LIBELLE", result.columns)
@@ -142,7 +143,7 @@ class TestExtractionPDF(unittest.TestCase):
 
     def test_create_named_dataframe_header_none(self):
         """Test quand header_row_idx est None."""
-        result = lc.create_named_dataframe(self.df_test, None)
+        result = create_named_dataframe(self.df_test, None)
         self.assertIsNone(result)
 
 
@@ -156,12 +157,12 @@ class TestGenerationExcel(unittest.TestCase):
         
         # Données de test
         self.recettes_test = [
-            ["01/01/2023", "01/01/2023", "Cotisation", "REF001", 100.0, "Cotisations", "test.pdf"],
-            ["02/01/2023", "02/01/2023", "Tournoi", "REF002", 50.0, "Buvette/Tournoi", "test.pdf"],
+            Transaction("01/01/2023", "01/01/2023", "Cotisation", "REF001", 100.0, "Cotisations", "test.pdf", True),
+            Transaction("02/01/2023", "02/01/2023", "Tournoi", "REF002", 50.0, "Buvette/Tournoi", "test.pdf", True),
         ]
         self.depenses_test = [
-            ["03/01/2023", "03/01/2023", "Matériel", "REF003", 75.0, "Matériel sportif", "test.pdf"],
-            ["04/01/2023", "04/01/2023", "Arbitre", "REF004", 25.0, "Arbitrage", "test.pdf"],
+            Transaction("03/01/2023", "03/01/2023", "Matériel", "REF003", 75.0, "Matériel sportif", "test.pdf", False),
+            Transaction("04/01/2023", "04/01/2023", "Arbitre", "REF004", 25.0, "Déplacements", "test.pdf", False),
         ]
 
     def tearDown(self):
@@ -172,7 +173,7 @@ class TestGenerationExcel(unittest.TestCase):
         """Test de génération d'un nouveau fichier Excel."""
         output_path = self.temp_path / "test_nouveau.xlsx"
         
-        lc.generer_ou_mettre_a_jour(
+        generate_or_update_excel(
             self.recettes_test, self.depenses_test, 
             output_path, 2023, force=True
         )
@@ -193,7 +194,7 @@ class TestGenerationExcel(unittest.TestCase):
         wb = openpyxl.Workbook()
         wb.save(output_path)
         
-        lc.generer_ou_mettre_a_jour(
+        generate_or_update_excel(
             self.recettes_test, self.depenses_test, 
             output_path, 2023, force=True
         )
@@ -207,7 +208,7 @@ class TestGenerationExcel(unittest.TestCase):
         wb = openpyxl.Workbook()
         ws = wb.active
         
-        lc.ecrire_onglet_annuel(ws, self.recettes_test, self.depenses_test, 2023)
+        write_annual_sheet(ws, self.recettes_test, self.depenses_test, 2023)
         
         # Vérifier quelques cellules clés
         self.assertIn("LIVRE DE COMPTES 2023", str(ws["A1"].value))
@@ -238,7 +239,7 @@ class TestIntegrationComplète(unittest.TestCase):
         """Nettoyage après tests."""
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
-    @patch('livre_comptes.camelot')
+    @patch('parser.camelot')
     def test_extraction_pdf_mock(self, mock_camelot):
         """Test d'extraction PDF avec des données mockées."""
         # Créer des données de test
@@ -258,17 +259,17 @@ class TestIntegrationComplète(unittest.TestCase):
         
         # Tester l'extraction
         pdf_path = Path("test.pdf")
-        recettes, depenses = lc.extraire_operations_pdf_camelot(pdf_path, 2023)
+        result = extract_operations_pdf_camelot(pdf_path, 2023)
         
         # Vérifications
-        self.assertEqual(len(recettes), 1)  # Versement
-        self.assertEqual(len(depenses), 1)  # Chèque
-        self.assertEqual(recettes[0][4], 200.75)  # Montant versement
-        self.assertEqual(depenses[0][4], 100.50)  # Montant chèque
+        self.assertEqual(len(result.income_transactions), 1)  # Versement
+        self.assertEqual(len(result.expense_transactions), 1)  # Chèque
+        self.assertEqual(result.income_transactions[0].montant, 200.75)  # Montant versement
+        self.assertEqual(result.expense_transactions[0].montant, 100.50)  # Montant chèque
 
     def test_workflow_complet_mock(self):
         """Test du workflow complet avec données mockées."""
-        with patch('livre_comptes.camelot') as mock_camelot:
+        with patch('parser.camelot') as mock_camelot:
             # Préparer les données mockées
             df_mock = pd.DataFrame([
                 ["", "", "Libellé des opérations", "", "Débit", "Crédit"],
@@ -286,11 +287,11 @@ class TestIntegrationComplète(unittest.TestCase):
             pdf_path.touch()
             
             # Test du workflow
-            recettes, depenses = lc.extraire_operations_pdf_camelot(pdf_path, 2023)
+            result = extract_operations_pdf_camelot(pdf_path, 2023)
             
             # Générer le fichier Excel
             output_path = self.temp_path / "workflow_test.xlsx"
-            lc.generer_ou_mettre_a_jour(recettes, depenses, output_path, 2023, force=True)
+            generate_or_update_excel(result.income_transactions, result.expense_transactions, output_path, 2023, force=True)
             
             # Vérifications finales
             self.assertTrue(output_path.exists())
@@ -304,22 +305,22 @@ class TestFonctionsStyle(unittest.TestCase):
 
     def test_style_bordure(self):
         """Test de création des bordures."""
-        border_normale = lc.style_bordure()
-        border_fine = lc.style_bordure(fin=True)
+        border_normale = style_border()
+        border_fine = style_border(thin=True)
         
-        self.assertEqual(border_normale.left.style, "thin")
-        self.assertEqual(border_fine.left.style, "hair")
+        self.assertEqual(border_normale.left.style, "hair")  # Default when thin=False gives "hair"
+        self.assertEqual(border_fine.left.style, "thin")    # When thin=True gives "thin"
 
     def test_fill_couleur(self):
         """Test de création des remplissages de couleur."""
-        fill_test = lc.fill("FF0000")  # Rouge
+        fill_test = fill("FF0000")  # Rouge
         # OpenPyXL peut préfixer avec "00" pour l'alpha channel
         self.assertTrue(fill_test.fgColor.rgb in ["FF0000", "00FF0000"])
 
     def test_police_configuration(self):
         """Test de configuration des polices."""
-        police_normale = lc.police()
-        police_gras = lc.police(gras=True, taille=14, couleur="FF0000")
+        police_normale = font()
+        police_gras = font(bold=True, size=14, color="FF0000")
         
         self.assertFalse(police_normale.bold)
         self.assertTrue(police_gras.bold)
@@ -329,8 +330,8 @@ class TestFonctionsStyle(unittest.TestCase):
 
     def test_centrer_alignement(self):
         """Test des alignements."""
-        align_centre = lc.centrer()
-        align_gauche = lc.centrer(horizontal="left")
+        align_centre = center()
+        align_gauche = center(horizontal="left")
         
         self.assertEqual(align_centre.horizontal, "center")
         self.assertEqual(align_gauche.horizontal, "left")

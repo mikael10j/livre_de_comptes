@@ -14,7 +14,10 @@ import pandas as pd
 
 # Ajouter le répertoire parent au path pour l'import
 sys.path.append(str(Path(__file__).parent.parent))
-import livre_comptes as lc
+from parser import parse_amount, categorize_transaction, extract_operations_pdf_camelot
+from excel_writer import generate_or_update_excel
+from config import INCOME_RULES, EXPENSE_RULES, INCOME_CATEGORIES, EXPENSE_CATEGORIES
+from models import Transaction
 
 
 class TestPerformance(unittest.TestCase):
@@ -34,7 +37,7 @@ class TestPerformance(unittest.TestCase):
         test_values = ["123,45"] * 10000
         
         start_time = time.time()
-        results = [lc.parse_montant(val) for val in test_values]
+        results = [parse_amount(val) for val in test_values]
         end_time = time.time()
         
         # Doit traiter 10k valeurs en moins d'1 seconde
@@ -54,15 +57,15 @@ class TestPerformance(unittest.TestCase):
         ] * 1000
         
         start_time = time.time()
-        results_rec = [lc.categoriser(lib, lc.REGLES_RECETTES) for lib in test_libelles]
-        results_dep = [lc.categoriser(lib, lc.REGLES_DEPENSES) for lib in test_libelles]
+        results_rec = [categorize_transaction(lib, INCOME_RULES) for lib in test_libelles]
+        results_dep = [categorize_transaction(lib, EXPENSE_RULES) for lib in test_libelles]
         end_time = time.time()
         
         execution_time = end_time - start_time
         self.assertLess(execution_time, 1.0,
                        f"Catégorisation trop lente: {execution_time:.3f}s pour 6k opérations")
 
-    @patch('livre_comptes.camelot')
+    @patch('parser.camelot')
     def test_performance_extraction_large_dataset(self, mock_camelot):
         """Test avec un grand dataset simulé."""
         # Créer un grand DataFrame (1000 lignes d'opérations)
@@ -85,7 +88,7 @@ class TestPerformance(unittest.TestCase):
         pdf_path = Path("large_test.pdf")
         
         start_time = time.time()
-        recettes, depenses = lc.extraire_operations_pdf_camelot(pdf_path, 2023)
+        result = extract_operations_pdf_camelot(pdf_path, 2023)
         end_time = time.time()
         
         execution_time = end_time - start_time
@@ -93,7 +96,7 @@ class TestPerformance(unittest.TestCase):
                        f"Extraction trop lente: {execution_time:.3f}s pour 1000 opérations")
         
         # Vérifier que toutes les opérations ont été extraites
-        total_operations = len(recettes) + len(depenses)
+        total_operations = len(result.income_transactions) + len(result.expense_transactions)
         self.assertEqual(total_operations, 1000)
 
     def test_robustesse_donnees_corrompues(self):
@@ -113,7 +116,7 @@ class TestPerformance(unittest.TestCase):
             with self.subTest(input_corrompu=test_case):
                 # Ne doit pas lever d'exception
                 try:
-                    result = lc.parse_montant(test_case)
+                    result = parse_amount(test_case)
                     # Doit retourner 0.0 ou une valeur numérique valide
                     self.assertTrue(isinstance(result, (int, float)))
                 except Exception as e:
@@ -136,12 +139,12 @@ class TestPerformance(unittest.TestCase):
             with self.subTest(libelle=libelle[:30] + "..."):
                 # Ne doit pas lever d'exception
                 try:
-                    cat_rec = lc.categoriser(libelle, lc.REGLES_RECETTES)
-                    cat_dep = lc.categoriser(libelle, lc.REGLES_DEPENSES) 
+                    cat_rec = categorize_transaction(libelle, INCOME_RULES)
+                    cat_dep = categorize_transaction(libelle, EXPENSE_RULES) 
                     
                     # Doit retourner des catégories valides
-                    self.assertIn(cat_rec, lc.CATEGORIES_RECETTES)
-                    self.assertIn(cat_dep, lc.CATEGORIES_DEPENSES)
+                    self.assertIn(cat_rec, INCOME_CATEGORIES)
+                    self.assertIn(cat_dep, EXPENSE_CATEGORIES)
                 except Exception as e:
                     self.fail(f"Exception inattendue pour libellé complexe: {e}")
 
@@ -152,10 +155,10 @@ class TestPerformance(unittest.TestCase):
         grandes_depenses = []
         
         for i in range(10000):
-            recette = [f"01/01/2023", f"01/01/2023", f"Recette {i}", f"REF{i:06d}", 
-                      float(i), "Cotisations", "test.pdf"]
-            depense = [f"02/01/2023", f"02/01/2023", f"Dépense {i}", f"REF{i+10000:06d}", 
-                      float(i), "Autres", "test.pdf"]
+            recette = Transaction(f"01/01/2023", f"01/01/2023", f"Recette {i}", f"REF{i:06d}", 
+                      float(i), "Cotisations", "test.pdf", True)
+            depense = Transaction(f"02/01/2023", f"02/01/2023", f"Dépense {i}", f"REF{i+10000:06d}", 
+                      float(i), "Autres", "test.pdf", False)
             
             grandes_recettes.append(recette)
             grandes_depenses.append(depense)
@@ -165,7 +168,7 @@ class TestPerformance(unittest.TestCase):
         
         start_time = time.time()
         try:
-            lc.generer_ou_mettre_a_jour(grandes_recettes, grandes_depenses, 
+            generate_or_update_excel(grandes_recettes, grandes_depenses, 
                                         output_path, 2023, force=True)
             end_time = time.time()
             

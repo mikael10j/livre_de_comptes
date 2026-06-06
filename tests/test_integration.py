@@ -13,7 +13,10 @@ import openpyxl
 
 # Ajouter le répertoire parent au path pour l'import
 sys.path.append(str(Path(__file__).parent.parent))
-import livre_comptes as lc
+from parser import extract_operations_pdf_camelot
+from excel_writer import generate_or_update_excel
+from config import INCOME_CATEGORIES, EXPENSE_CATEGORIES
+from models import Transaction
 
 
 class TestIntegrationReal(unittest.TestCase):
@@ -46,26 +49,27 @@ class TestIntegrationReal(unittest.TestCase):
                 # Déterminer l'année selon le nom du fichier
                 annee = 2023 if "2023" in pdf_file.name else 2019
                 
-                recettes, depenses = lc.extraire_operations_pdf_camelot(pdf_file, annee)
+                result = extract_operations_pdf_camelot(pdf_file, annee)
                 
                 # Vérifications de base
-                self.assertIsInstance(recettes, list)
-                self.assertIsInstance(depenses, list)
+                self.assertIsNotNone(result)
+                self.assertIsInstance(result.income_transactions, list)
+                self.assertIsInstance(result.expense_transactions, list)
                 
                 # Chaque opération doit avoir la bonne structure
-                for recette in recettes:
-                    self.assertEqual(len(recette), 7)  # 7 champs par opération
-                    self.assertIsInstance(recette[4], (int, float))  # Montant numérique
-                    self.assertGreater(recette[4], 0)  # Montant positif
+                for recette in result.income_transactions:
+                    self.assertIsInstance(recette, Transaction)
+                    self.assertIsInstance(recette.montant, (int, float))  # Montant numérique
+                    self.assertGreater(recette.montant, 0)  # Montant positif
                 
-                for depense in depenses:
-                    self.assertEqual(len(depense), 7)
-                    self.assertIsInstance(depense[4], (int, float))
-                    self.assertGreater(depense[4], 0)
+                for depense in result.expense_transactions:
+                    self.assertIsInstance(depense, Transaction)
+                    self.assertIsInstance(depense.montant, (int, float))
+                    self.assertGreater(depense.montant, 0)
                 
-                total_operations += len(recettes) + len(depenses)
-                total_recettes += len(recettes)
-                total_depenses += len(depenses)
+                total_operations += len(result.income_transactions) + len(result.expense_transactions)
+                total_recettes += len(result.income_transactions)
+                total_depenses += len(result.expense_transactions)
         
         print(f"\n📊 Extraction réelle: {total_operations} opérations "
               f"({total_recettes} recettes, {total_depenses} dépenses)")
@@ -89,10 +93,10 @@ class TestIntegrationReal(unittest.TestCase):
             if annee in annees_traitees:
                 continue  # Éviter de traiter plusieurs fois la même année
                 
-            recettes, depenses = lc.extraire_operations_pdf_camelot(pdf_file, annee)
+            result = extract_operations_pdf_camelot(pdf_file, annee)
             
-            if recettes or depenses:  # Seulement si des opérations ont été trouvées
-                lc.generer_ou_mettre_a_jour(recettes, depenses, output_path, annee, force=True)
+            if result.income_transactions or result.expense_transactions:  # Seulement si des opérations ont été trouvées
+                generate_or_update_excel(result.income_transactions, result.expense_transactions, output_path, annee, force=True)
                 annees_traitees.add(annee)
         
         # Vérifier le fichier généré
@@ -118,30 +122,30 @@ class TestIntegrationReal(unittest.TestCase):
         for pdf_file in self.pdf_files:
             with self.subTest(pdf=pdf_file.name):
                 annee = 2023 if "2023" in pdf_file.name else 2019
-                recettes, depenses = lc.extraire_operations_pdf_camelot(pdf_file, annee)
+                result = extract_operations_pdf_camelot(pdf_file, annee)
                 
                 # Vérifier la cohérence des dates
-                for operation in recettes + depenses:
-                    date_ope, date_val, libelle, ref, montant, categorie, source = operation
+                for operation in result.income_transactions + result.expense_transactions:
+                    self.assertIsInstance(operation, Transaction)
                     
                     # Les dates doivent contenir l'année
-                    self.assertIn(str(annee), date_ope)
-                    self.assertIn(str(annee), date_val)
+                    self.assertIn(str(annee), operation.date_operation)
+                    self.assertIn(str(annee), operation.date_valeur)
                     
                     # Le libellé ne doit pas être vide
-                    self.assertGreater(len(libelle.strip()), 0)
+                    self.assertGreater(len(operation.libelle.strip()), 0)
                     
                     # Le montant doit être positif
-                    self.assertGreater(montant, 0)
+                    self.assertGreater(operation.montant, 0)
                     
                     # La catégorie doit être valide
-                    if operation in recettes:
-                        self.assertIn(categorie, lc.CATEGORIES_RECETTES)
+                    if operation.is_income:
+                        self.assertIn(operation.categorie, INCOME_CATEGORIES)
                     else:
-                        self.assertIn(categorie, lc.CATEGORIES_DEPENSES)
+                        self.assertIn(operation.categorie, EXPENSE_CATEGORIES)
                     
                     # La source doit correspondre au fichier
-                    self.assertEqual(source, pdf_file.stem)
+                    self.assertEqual(operation.source, pdf_file.stem)
 
     def test_reproductibilite(self):
         """Test de reproductibilité : même PDF doit donner mêmes résultats."""
@@ -152,18 +156,18 @@ class TestIntegrationReal(unittest.TestCase):
         annee = 2023 if "2023" in pdf_test.name else 2019
         
         # Extraire deux fois
-        recettes1, depenses1 = lc.extraire_operations_pdf_camelot(pdf_test, annee)
-        recettes2, depenses2 = lc.extraire_operations_pdf_camelot(pdf_test, annee)
+        result1 = extract_operations_pdf_camelot(pdf_test, annee)
+        result2 = extract_operations_pdf_camelot(pdf_test, annee)
         
         # Les résultats doivent être identiques
-        self.assertEqual(len(recettes1), len(recettes2))
-        self.assertEqual(len(depenses1), len(depenses2))
+        self.assertEqual(len(result1.income_transactions), len(result2.income_transactions))
+        self.assertEqual(len(result1.expense_transactions), len(result2.expense_transactions))
         
         # Comparer operation par operation
-        for op1, op2 in zip(recettes1, recettes2):
+        for op1, op2 in zip(result1.income_transactions, result2.income_transactions):
             self.assertEqual(op1, op2)
             
-        for op1, op2 in zip(depenses1, depenses2):
+        for op1, op2 in zip(result1.expense_transactions, result2.expense_transactions):
             self.assertEqual(op1, op2)
         
         print(f"✅ Reproductibilité confirmée pour {pdf_test.name}")
@@ -172,19 +176,19 @@ class TestIntegrationReal(unittest.TestCase):
         """Test de gestion d'erreurs avec des fichiers problématiques."""
         # Tester avec un fichier inexistant
         pdf_inexistant = Path("fichier_inexistant.pdf")
-        recettes, depenses = lc.extraire_operations_pdf_camelot(pdf_inexistant, 2023)
+        result = extract_operations_pdf_camelot(pdf_inexistant, 2023)
         
         # Doit retourner des listes vides sans lever d'exception
-        self.assertEqual(recettes, [])
-        self.assertEqual(depenses, [])
+        self.assertEqual(result.income_transactions, [])
+        self.assertEqual(result.expense_transactions, [])
         
         # Tester avec un fichier vide
         fichier_vide = self.temp_path / "vide.pdf"
         fichier_vide.touch()
         
-        recettes, depenses = lc.extraire_operations_pdf_camelot(fichier_vide, 2023)
-        self.assertEqual(recettes, [])
-        self.assertEqual(depenses, [])
+        result = extract_operations_pdf_camelot(fichier_vide, 2023)
+        self.assertEqual(result.income_transactions, [])
+        self.assertEqual(result.expense_transactions, [])
 
 
 def run_integration_tests():
